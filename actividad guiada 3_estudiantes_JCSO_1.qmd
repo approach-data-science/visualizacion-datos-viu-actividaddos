@@ -1,0 +1,341 @@
+---
+title: "Actividad Guiada III. Estudiantes"
+author: Jhon Carlos Solis Ochoa
+format: 
+  html: 
+    embed-resources: true
+editor: visual
+---
+
+## Hillshade
+
+Replica la actividad realizada en clase para otro área de tu elección.
+
+```{r}
+if(!require("tidyverse")) install.packages("tidyverse")
+if(!require("sf")) install.packages("sf")
+if(!require("elevatr")) install.packages("elevatr")
+if(!require("terra")) install.packages("terra")
+if(!require("whitebox")) install.packages("whitebox")
+if(!require("tidyterra")) install.packages("tidyterra")
+if(!require("giscoR")) install.packages("giscoR")
+if(!require("ggnewscale")) install.packages("ggnewscale")
+if(!require("ggblend")) install.packages("ggblend")
+if(!require("httr2")) install.packages("httr2")
+if(!require("eurostat")) install.packages("eurostat")
+if(!require("osmdata")) install.packages("osmdata")
+
+# paquetes
+library(sf)
+library(elevatr)
+library(tidyverse)
+library(terra)
+library(whitebox)
+library(ggnewscale)
+library(tidyterra)
+library(giscoR)
+library(units)
+library(ggblend)
+library(osmdata)
+
+library(knitr)
+```
+
+Obtendremos el mapa de Tuquia para realizar la revision de mapas en relieve
+
+```{r}
+italia <- gisco_get_countries(country = "Italy", resolution = "03")
+
+plot(italia)
+```
+
+```{r}
+# importamos los lagos
+lakes <- st_read("22_DKM500_GEWAESSER_PLY.shp")
+
+
+lakes <- mutate(lakes, areakm = set_units(SHP_AREA, "m2") %>% 
+                                          set_units("km2")) %>% 
+                filter(areakm > set_units(30, "km2") & NLN1 == "Italian")
+plot(lakes)
+```
+
+```{r, warning=FALSE}
+# obtenemos el mdt con 
+mdt <- get_elev_raster(italia, z = 7)
+mdt # clase antigua de RasterLayer
+plot(mdt)
+
+# convertir a terra y enmascarar la zona de interés
+mdt <- rast(mdt) %>% 
+         mask(vect(italia)) 
+
+# reproyectamos
+mdt <- project(mdt, crs(lakes))
+
+# reproyectamos 
+italia <- st_transform(italia, st_crs(lakes))
+
+plot(mdt)
+
+```
+
+```{r}
+mdtdf <- as.data.frame(mdt, xy = TRUE)
+names(mdtdf)[3] <- "alt"
+
+# mapa
+ggplot() +
+  geom_raster(data = mdtdf,
+              aes(x, y, fill = alt)) +
+   geom_sf(data = lakes,
+          fill = "#0000CD", 
+          colour = NA) +
+  scale_fill_hypso_tint_c(breaks = c(180, 500, 1000, 1500, 2000, 3000)) +
+  guides(fill = guide_colorsteps(barwidth = 20,
+                                 barheight = .5,
+                                 title.position = "right")) +
+  labs(fill = "m") +
+  coord_sf() +
+  theme_void() +
+  theme(legend.position = "bottom")
+```
+
+```{r, error=FALSE}
+# estimamos la pendiente
+sl <- terrain(mdt, "slope", unit = "radians")
+plot(sl)
+# estimamos la orientación
+asp <- terrain(mdt, "aspect", unit = "radians")
+plot(asp)
+
+# calculamos el efecto hillshade con 45º de elevación 
+hill_single <- shade(sl, asp, 
+      angle = 45, 
+      direction = 300,
+      normalize= TRUE)
+
+# resultado final hillshade 
+plot(hill_single, col = grey(1:100/100))
+```
+
+```{r, warning=FALSE}
+# convertimos el hillshade a xyz
+hilldf_single <- as.data.frame(hill_single, xy = TRUE)
+
+# mapa 
+ggplot() +
+  geom_raster(data = hilldf_single,
+              aes(x, y, fill = hillshade),
+              show.legend = FALSE) +
+  scale_fill_distiller(palette = "Greys") +
+  new_scale_fill() +
+  geom_raster(data = mdtdf,
+              aes(x, y, fill = alt),
+              alpha = .7) +
+  scale_fill_hypso_tint_c(breaks = c(180, 500, 1000, 1500, 2000, 3000)) +
+  geom_sf(data = lakes,
+          fill = "#0000CD", colour = NA) +
+  guides(fill = guide_colorsteps(barwidth = 20,
+                                 barheight = .5,
+                                 title.position = "right")) +
+  labs(fill = "m") +
+  coord_sf() +
+  theme_void() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+# pasamos varias direcciones a shade()
+hillmulti <- map(c(270, 15, 60, 330), function(dir){ 
+                    shade(sl, asp, 
+                          angle = 45, 
+                          direction = dir,
+                          normalize= TRUE)}
+  )
+
+# creamos un raster multidimensional y lo reducimos sumando
+hillmulti <- rast(hillmulti) %>% sum()
+
+# multidireccional
+plot(hillmulti, col = grey(1:100/100))
+# unidireccional
+plot(hill_single, col = grey(1:100/100))
+```
+
+```{r}
+# convertimos el hillshade a xyz
+hillmultidf <- as.data.frame(hillmulti, xy = TRUE)
+
+# mapa
+ggplot() +
+  geom_raster(data = hillmultidf,
+              aes(x, y, fill = sum),
+              show.legend = FALSE) +
+  scale_fill_distiller(palette = "Greys") +
+  new_scale_fill() +
+  geom_raster(data = mdtdf,
+              aes(x, y, fill = alt),
+              alpha = .5) +
+  scale_fill_hypso_tint_c(breaks = c(180, 500, 1000, 1500, 2000, 3000)) +
+  geom_sf(data = lakes,
+          fill = "#0000CD", colour = NA) +
+  guides(fill = guide_colorsteps(barwidth = 15,
+                                 barheight = .4,
+                                 title.position = "right")) +
+  labs(fill = "m") +
+  coord_sf() +
+  theme_void() +
+    theme(legend.position = "top")
+```
+
+```{r, eval=FALSE}
+# mapa
+m <- ggplot() +
+  list(
+    geom_tile(data = hillmultidf,
+              aes(x, y, fill = sum),
+              show.legend = FALSE),
+    scale_fill_distiller(palette = "Greys"),
+    new_scale_fill(),
+    geom_tile(data = mdtdf,
+              aes(x, y, fill = alt),
+              alpha = .7),
+    scale_fill_hypso_tint_c(breaks = c(180, 500, 1000, 1500, 2000, 3000))
+  ) +
+  geom_sf(data = lakes,
+          fill = "#0000CD", colour = NA) +
+  guides(fill = guide_colorsteps(barwidth = 20,
+                                 barheight = .5,
+                                 title.position = "right")) +
+  labs(fill = "m") +
+  coord_sf() +
+  theme_void() +
+  theme(legend.position = "top")
+
+ggsave("mdt_hillshade_italy_blend.png", m, 
+       width = 10, 
+       height = 8, 
+       unit = "in",
+       device = png, 
+       type = "cairo",
+       bg = "white")
+```
+
+```{r}
+if(!require("mapview")) install.packages("mapview")
+library(mapview)
+mapview(lakes)
+```
+
+### Datos
+
+## Camas hospitalarias en Europa
+
+La tarea consiste en crear un mapa de la UE con datos sobre camas hospitalarias a nivel regional (NUTS-2) (dataset hlth_rs_bdsrg) usando el paquete `{eurostat}`. La dos funciones fundamentales son `get_eurostat()` y `get_eurostat_geospatial()`.
+
+### Paquetes
+
+```{r}
+library(sf)
+library(tidyverse)
+library(giscoR)
+library(eurostat)
+```
+
+```{r}
+suppressWarnings(library(dplyr))
+```
+
+### Datos
+
+```{r}
+camas_hospitalarias <- get_eurostat("hlth_rs_bdsrg", time_format = "num")
+head(camas_hospitalarias,5)
+
+
+
+
+```
+
+Obtenemos los datos geoespaciales de las regiones NUTS-2
+
+```{r}
+
+nuts <- 2
+salida <- "sf"
+resolucion <- 60
+
+
+datos_geoespaciales <- get_eurostat_geospatial(output = salida, nuts_level = nuts, resolution = resolucion)
+```
+
+```{r}
+datos_geoespaciales 
+```
+
+```{r}
+pais <- "IT"
+periodo <- 2020
+
+
+camas_hospitalarias_filtrada <- camas_hospitalarias %>%
+  filter(grepl(pais, geo), TIME_PERIOD == periodo)
+
+
+datos_geoespaciales_filtrada <- datos_geoespaciales %>%
+  filter(CNTR_CODE == pais) 
+
+
+datos_combinados <- left_join(datos_geoespaciales_filtrada, camas_hospitalarias_filtrada, by = c("NUTS_ID" = "geo"))
+
+head(datos_combinados,5)
+```
+
+```{r}
+summary(datos_combinados)
+```
+
+```{r}
+
+unidad <- "NR"
+
+sum(is.na(datos_combinados$values))
+datos_combinados_filtrada <- datos_combinados %>% filter(!is.na(values))
+
+datos_combinados_filtrada <- datos_combinados_filtrada %>% filter(unit == unidad)
+
+head(datos_combinados_filtrada,5)
+```
+
+```{r}
+datos_combinados_filtrada <- datos_combinados_filtrada %>%
+  mutate(camas_categoria = case_when(
+    values <= 2000 ~ "0-2000 camas",
+    values <= 5000 ~ "2001-5000 camas",
+    values <= 8000 ~ "5001-8000 camas",
+    values <= 12000 ~ "8001-12000 camas",
+    values > 12000 ~ "Más de 1200 camas"
+  ))
+```
+
+```{r}
+# Graficar el mapa con la clasificación de camas y la categoría "No Reportado"
+ggplot(datos_combinados_filtrada) +
+  geom_sf(aes(fill = camas_categoria)) +  
+  scale_fill_manual(values = c(
+    "0-2000 camas" = "darkred",  
+    "2001-5000 camas" = "orangered",
+    "5001-8000 camas" = "orange",
+    "8001-12000 camas" = "lightblue",
+    "Más de 12000 camas" = "blue"
+  ), name = "Grupo de Camas") +
+  labs(title = "Distribución de Camas Hospitalarias por Región NUTS-2",
+       subtitle = "Colores según el rango de camas disponibles por región") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
